@@ -1,7 +1,7 @@
 {
   "name": "nyc-subway-tracker",
-  "version": "1.1.0",
-  "description": "Live NYC subway arrivals for your chosen stations, with per-station direction filtering.",
+  "version": "1.2.0",
+  "description": "Live NYC subway arrivals for your chosen stations, with per-station direction, line, and train-count filtering.",
   "private": true,
   "scripts": {
     "start": "bun run index.ts"

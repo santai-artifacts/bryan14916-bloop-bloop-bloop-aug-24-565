@@ -30,15 +30,27 @@ db.exec(`
   );
 `);
 
-// Migration: per-station direction preference ('both' | 'N' | 'S').
+// Migrations: per-station display preferences.
 {
   const cols = db.query("PRAGMA table_info(favorites)").all() as any[];
-  if (!cols.some((c) => c.name === "direction")) {
+  const has = (n: string) => cols.some((c) => c.name === n);
+  if (!has("direction"))
     db.exec(
       "ALTER TABLE favorites ADD COLUMN direction TEXT NOT NULL DEFAULT 'both'"
     );
-  }
+  // routes_filter: csv of enabled line labels; '' means show all lines.
+  if (!has("routes_filter"))
+    db.exec(
+      "ALTER TABLE favorites ADD COLUMN routes_filter TEXT NOT NULL DEFAULT ''"
+    );
+  // max_trains: how many upcoming trains to show per direction.
+  if (!has("max_trains"))
+    db.exec(
+      "ALTER TABLE favorites ADD COLUMN max_trains INTEGER NOT NULL DEFAULT 6"
+    );
 }
+
+const MAX_TRAINS = 12; // reasonable cap for the per-direction count
 
 // ---------------------------------------------------------------------------
 // Station catalogue (cached from the public MTA / NY Open Data dataset)
@@ -212,13 +224,18 @@ const server = {
     if (pathname === "/api/favorites" && req.method === "GET") {
       const favs = db
         .query(
-          `SELECT s.*, f.direction FROM favorites f
+          `SELECT s.*, f.direction, f.routes_filter, f.max_trains FROM favorites f
            JOIN stations s ON s.gtfs_stop_id = f.gtfs_stop_id
            ORDER BY f.sort_order, f.added_at`
         )
         .all() as any[];
       return json({
-        favorites: favs.map((r) => ({ ...toStation(r), direction: r.direction || "both" })),
+        favorites: favs.map((r) => ({
+          ...toStation(r),
+          direction: r.direction || "both",
+          routes_filter: (r.routes_filter || "").split(",").filter(Boolean),
+          max_trains: r.max_trains || 6,
+        })),
       });
     }
 
@@ -245,13 +262,37 @@ const server = {
       return json({ ok: true });
     }
     if (favMatch && req.method === "PATCH") {
+      const id = decodeURIComponent(favMatch[1]);
       const body = (await req.json().catch(() => ({}))) as any;
-      const dir = body.direction;
-      if (!["both", "N", "S"].includes(dir))
-        return json({ error: "bad direction" }, 400);
+      const sets: string[] = [];
+      const args: any[] = [];
+
+      if ("direction" in body) {
+        if (!["both", "N", "S"].includes(body.direction))
+          return json({ error: "bad direction" }, 400);
+        sets.push("direction = ?");
+        args.push(body.direction);
+      }
+      if ("routes" in body) {
+        const arr = Array.isArray(body.routes)
+          ? body.routes.filter((x: any) => typeof x === "string")
+          : [];
+        sets.push("routes_filter = ?");
+        args.push(arr.join(","));
+      }
+      if ("max_trains" in body) {
+        let n = Number(body.max_trains);
+        if (!Number.isFinite(n)) return json({ error: "bad max_trains" }, 400);
+        n = Math.max(1, Math.min(MAX_TRAINS, Math.round(n)));
+        sets.push("max_trains = ?");
+        args.push(n);
+      }
+      if (sets.length === 0) return json({ error: "nothing to update" }, 400);
+
+      args.push(id);
       db.prepare(
-        "UPDATE favorites SET direction = ? WHERE gtfs_stop_id = ?"
-      ).run(dir, decodeURIComponent(favMatch[1]));
+        `UPDATE favorites SET ${sets.join(", ")} WHERE gtfs_stop_id = ?`
+      ).run(...args);
       return json({ ok: true });
     }
 
@@ -281,10 +322,12 @@ const server = {
       const stations = ids.map((id) => {
         const meta = stationRow(id);
         const list = (byStop[id] || []).sort((a, b) => a.time - b.time);
+        // Return a generous window; the client filters by line and trims to the
+        // user's chosen count, so the top-N must be computed after filtering.
         const pick = (dir: "N" | "S") =>
           list
             .filter((a) => a.dir === dir)
-            .slice(0, 6)
+            .slice(0, 40)
             .map((a) => ({
               route: a.route,
               time: a.time,

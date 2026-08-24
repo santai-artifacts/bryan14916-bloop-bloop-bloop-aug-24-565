@@ -39,6 +39,32 @@ function bullet(r, small) {
   return el;
 }
 
+// Largest per-direction train count the user may request (matches the server).
+const MAX_TRAINS = 12;
+
+// The distinct line labels that serve a station (collapses variants: 6X->6 …).
+function stationLines(s) {
+  const out = [];
+  const seen = new Set();
+  for (const r of s.routes || []) {
+    const l = routeLabel(r);
+    if (!seen.has(l)) {
+      seen.add(l);
+      out.push(l);
+    }
+  }
+  return out;
+}
+
+// The set of currently-shown lines. Empty filter == all lines.
+function enabledLines(s, fav) {
+  const all = stationLines(s);
+  const f = fav.routes_filter;
+  if (!f || f.length === 0) return new Set(all);
+  const set = new Set(f.filter((l) => all.includes(l)));
+  return set.size ? set : new Set(all);
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -182,8 +208,12 @@ function stationCard(s, fav) {
   head.append(title, routes, rm);
   card.appendChild(head);
 
-  // Direction filter (labels are station-specific). Buttons are built once;
-  // their active state is updated in place.
+  // Controls bar: direction filter + (multi-line) line filter + train count.
+  // Built once; live state is applied in updateCard.
+  const controls = document.createElement("div");
+  controls.className = "controls";
+
+  // Direction segmented control (labels are station-specific).
   const seg = document.createElement("div");
   seg.className = "seg";
   const options = [
@@ -199,7 +229,42 @@ function stationCard(s, fav) {
     b.onclick = () => setDirection(s.gtfs_stop_id, value);
     seg.appendChild(b);
   }
-  card.appendChild(seg);
+  controls.appendChild(seg);
+
+  // Line filter — only meaningful when more than one line serves the station.
+  const lines = stationLines(s);
+  if (lines.length > 1) {
+    const lineWrap = document.createElement("div");
+    lineWrap.className = "lines";
+    for (const line of lines) {
+      const chip = bullet(line, true);
+      chip.classList.add("line-chip");
+      chip.dataset.line = line;
+      chip.title = `Show/hide ${line} trains`;
+      chip.onclick = () => toggleLine(s.gtfs_stop_id, line);
+      lineWrap.appendChild(chip);
+    }
+    controls.appendChild(lineWrap);
+  }
+
+  // Train-count stepper.
+  const count = document.createElement("div");
+  count.className = "count";
+  count.innerHTML =
+    `<span class="count-label">Trains</span>` +
+    `<button class="step" data-d="-1" aria-label="Show fewer trains">−</button>` +
+    `<span class="n"></span>` +
+    `<button class="step" data-d="1" aria-label="Show more trains">+</button>`;
+  count
+    .querySelectorAll(".step")
+    .forEach(
+      (btn) =>
+        (btn.onclick = () =>
+          setCount(s.gtfs_stop_id, Number(btn.dataset.d)))
+    );
+  controls.appendChild(count);
+
+  card.appendChild(controls);
 
   const dirs = document.createElement("div");
   dirs.className = "dirs";
@@ -214,35 +279,97 @@ function updateCard(card, s, fav) {
   const dir = fav.direction || "both";
   card.classList.toggle("half", dir !== "both");
 
-  // Active state on the segmented control.
+  // Active state on the direction control.
   for (const b of card.querySelector(".seg").children) {
     b.classList.toggle("active", b.dataset.value === dir);
   }
 
-  // Arrival columns. Rebuilding this subtree is synchronous (one paint, no
-  // blank frame) and carries no animation, so it doesn't flash.
+  // Line filter state.
+  const enabled = enabledLines(s, fav);
+  const lineWrap = card.querySelector(".lines");
+  if (lineWrap) {
+    for (const chip of lineWrap.children) {
+      chip.classList.toggle("off", !enabled.has(chip.dataset.line));
+    }
+  }
+
+  // Train-count value + stepper bounds.
+  const count = fav.max_trains || 6;
+  const nEl = card.querySelector(".count .n");
+  if (nEl) nEl.textContent = count;
+  card.querySelectorAll(".count .step").forEach((btn) => {
+    const d = Number(btn.dataset.d);
+    btn.disabled = (d < 0 && count <= 1) || (d > 0 && count >= MAX_TRAINS);
+  });
+
+  // Arrival columns: filter by enabled lines, then trim to the chosen count.
+  // Rebuilding this subtree is synchronous (one paint, no blank frame) and
+  // carries no animation, so it doesn't flash.
   const northLabel = s.north_label || "Northbound";
   const southLabel = s.south_label || "Southbound";
+  const trim = (arr) =>
+    (arr || [])
+      .filter((a) => enabled.has(routeLabel(a.route)))
+      .slice(0, count);
   const dirs = card.querySelector(".dirs");
   dirs.replaceChildren();
-  if (dir !== "S") dirs.appendChild(dirColumn(northLabel, s.arrivals?.N));
-  if (dir !== "N") dirs.appendChild(dirColumn(southLabel, s.arrivals?.S));
+  if (dir !== "S") dirs.appendChild(dirColumn(northLabel, trim(s.arrivals?.N)));
+  if (dir !== "N") dirs.appendChild(dirColumn(southLabel, trim(s.arrivals?.S)));
   dirs.style.gridTemplateColumns = dir !== "both" ? "1fr" : "";
 }
 
-async function setDirection(id, dir) {
+// Best-effort persistence of a preference change.
+function patchFav(id, body) {
+  return fetch("/api/favorites/" + encodeURIComponent(id), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => {});
+}
+
+// Latest station data (arrivals + metadata) or the favorite as a fallback.
+function currentStation(id) {
+  if (lastData) {
+    const s = lastData.stations.find((x) => x.gtfs_stop_id === id);
+    if (s) return s;
+  }
+  return favorites.find((f) => f.gtfs_stop_id === id);
+}
+
+function setDirection(id, dir) {
   const fav = favorites.find((f) => f.gtfs_stop_id === id);
   if (fav) fav.direction = dir;
   render(lastData); // reflect immediately
-  try {
-    await fetch("/api/favorites/" + encodeURIComponent(id), {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ direction: dir }),
-    });
-  } catch (e) {
-    /* preference is best-effort */
+  patchFav(id, { direction: dir });
+}
+
+function toggleLine(id, line) {
+  const fav = favorites.find((f) => f.gtfs_stop_id === id);
+  if (!fav) return;
+  const s = currentStation(id) || fav;
+  const all = stationLines(s);
+  const enabled = new Set(enabledLines(s, fav));
+  if (enabled.has(line)) {
+    if (enabled.size <= 1) return; // always keep at least one line visible
+    enabled.delete(line);
+  } else {
+    enabled.add(line);
   }
+  const arr = all.filter((l) => enabled.has(l)); // preserve line order
+  fav.routes_filter = arr.length === all.length ? [] : arr; // [] == all
+  render(lastData);
+  patchFav(id, { routes: fav.routes_filter });
+}
+
+function setCount(id, delta) {
+  const fav = favorites.find((f) => f.gtfs_stop_id === id);
+  if (!fav) return;
+  const cur = fav.max_trains || 6;
+  const next = Math.max(1, Math.min(MAX_TRAINS, cur + delta));
+  if (next === cur) return;
+  fav.max_trains = next;
+  render(lastData);
+  patchFav(id, { max_trains: next });
 }
 
 function dirColumn(label, arrivals) {
