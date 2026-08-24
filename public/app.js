@@ -129,7 +129,8 @@ function render(data) {
 
 function stationCard(s, fav) {
   const card = document.createElement("article");
-  card.className = "station";
+  const dir = fav.direction || "both";
+  card.className = "station" + (dir !== "both" ? " half" : "");
 
   // Head
   const head = document.createElement("div");
@@ -157,7 +158,6 @@ function stationCard(s, fav) {
   card.appendChild(head);
 
   // Direction filter (Both / uptown / downtown — labels are station-specific)
-  const dir = fav.direction || "both";
   const northLabel = s.north_label || "Northbound";
   const southLabel = s.south_label || "Southbound";
   const seg = document.createElement("div");
