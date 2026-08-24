@@ -101,9 +101,15 @@ function setStatus(msg) {
 // ---------------------------------------------------------------------------
 // Render
 // ---------------------------------------------------------------------------
+// Cards are kept alive across renders (keyed by station id) so that refreshing
+// data or toggling direction updates in place instead of tearing the board down
+// and replaying the entrance animation — which is what caused the flashing.
+const cardIndex = new Map();
+
 function render(data) {
-  board.innerHTML = "";
   if (favorites.length === 0) {
+    board.innerHTML = "";
+    cardIndex.clear();
     emptyEl.hidden = false;
     $("#lastUpdated").textContent = "";
     return;
@@ -113,9 +119,26 @@ function render(data) {
   const map = {};
   if (data) for (const s of data.stations) map[s.gtfs_stop_id] = s;
 
+  // Drop cards for stations that are no longer favorites.
+  const favIds = new Set(favorites.map((f) => f.gtfs_stop_id));
+  for (const [id, card] of cardIndex) {
+    if (!favIds.has(id)) {
+      card.remove();
+      cardIndex.delete(id);
+    }
+  }
+
+  // Create or update a card per favorite, in order.
   for (const fav of favorites) {
     const s = map[fav.gtfs_stop_id] || fav;
-    board.appendChild(stationCard(s, fav));
+    let card = cardIndex.get(fav.gtfs_stop_id);
+    if (!card) {
+      card = stationCard(s, fav);
+      cardIndex.set(fav.gtfs_stop_id, card);
+    } else {
+      updateCard(card, s, fav);
+    }
+    board.appendChild(card); // re-appending in order keeps favorites order
   }
 
   if (data)
@@ -127,12 +150,14 @@ function render(data) {
       });
 }
 
+// Build a card's stable structure once. Volatile parts (direction state and the
+// arrival columns) are filled by updateCard so later refreshes never recreate it.
 function stationCard(s, fav) {
   const card = document.createElement("article");
-  const dir = fav.direction || "both";
-  card.className = "station" + (dir !== "both" ? " half" : "");
+  card.className = "station";
+  card.dataset.id = s.gtfs_stop_id;
 
-  // Head
+  // Head (static for the life of the card)
   const head = document.createElement("div");
   head.className = "station-head";
 
@@ -157,36 +182,52 @@ function stationCard(s, fav) {
   head.append(title, routes, rm);
   card.appendChild(head);
 
-  // Direction filter (Both / uptown / downtown — labels are station-specific)
-  const northLabel = s.north_label || "Northbound";
-  const southLabel = s.south_label || "Southbound";
+  // Direction filter (labels are station-specific). Buttons are built once;
+  // their active state is updated in place.
   const seg = document.createElement("div");
   seg.className = "seg";
   const options = [
     ["both", "Both"],
-    ["N", northLabel],
-    ["S", southLabel],
+    ["N", s.north_label || "Northbound"],
+    ["S", s.south_label || "Southbound"],
   ];
   for (const [value, label] of options) {
     const b = document.createElement("button");
-    b.className = "seg-btn" + (dir === value ? " active" : "");
+    b.className = "seg-btn";
+    b.dataset.value = value;
     b.textContent = label;
     b.onclick = () => setDirection(s.gtfs_stop_id, value);
     seg.appendChild(b);
   }
   card.appendChild(seg);
 
-  // Directions
   const dirs = document.createElement("div");
   dirs.className = "dirs";
-  if (dir !== "S")
-    dirs.appendChild(dirColumn(northLabel, s.arrivals?.N));
-  if (dir !== "N")
-    dirs.appendChild(dirColumn(southLabel, s.arrivals?.S));
-  if (dir !== "both") dirs.style.gridTemplateColumns = "1fr";
   card.appendChild(dirs);
 
+  updateCard(card, s, fav);
   return card;
+}
+
+// Update only the parts of an existing card that can change.
+function updateCard(card, s, fav) {
+  const dir = fav.direction || "both";
+  card.classList.toggle("half", dir !== "both");
+
+  // Active state on the segmented control.
+  for (const b of card.querySelector(".seg").children) {
+    b.classList.toggle("active", b.dataset.value === dir);
+  }
+
+  // Arrival columns. Rebuilding this subtree is synchronous (one paint, no
+  // blank frame) and carries no animation, so it doesn't flash.
+  const northLabel = s.north_label || "Northbound";
+  const southLabel = s.south_label || "Southbound";
+  const dirs = card.querySelector(".dirs");
+  dirs.replaceChildren();
+  if (dir !== "S") dirs.appendChild(dirColumn(northLabel, s.arrivals?.N));
+  if (dir !== "N") dirs.appendChild(dirColumn(southLabel, s.arrivals?.S));
+  dirs.style.gridTemplateColumns = dir !== "both" ? "1fr" : "";
 }
 
 async function setDirection(id, dir) {
