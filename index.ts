@@ -30,6 +30,16 @@ db.exec(`
   );
 `);
 
+// Migration: per-station direction preference ('both' | 'N' | 'S').
+{
+  const cols = db.query("PRAGMA table_info(favorites)").all() as any[];
+  if (!cols.some((c) => c.name === "direction")) {
+    db.exec(
+      "ALTER TABLE favorites ADD COLUMN direction TEXT NOT NULL DEFAULT 'both'"
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Station catalogue (cached from the public MTA / NY Open Data dataset)
 // ---------------------------------------------------------------------------
@@ -202,12 +212,14 @@ const server = {
     if (pathname === "/api/favorites" && req.method === "GET") {
       const favs = db
         .query(
-          `SELECT s.* FROM favorites f
+          `SELECT s.*, f.direction FROM favorites f
            JOIN stations s ON s.gtfs_stop_id = f.gtfs_stop_id
            ORDER BY f.sort_order, f.added_at`
         )
         .all() as any[];
-      return json({ favorites: favs.map(toStation) });
+      return json({
+        favorites: favs.map((r) => ({ ...toStation(r), direction: r.direction || "both" })),
+      });
     }
 
     if (pathname === "/api/favorites" && req.method === "POST") {
@@ -230,6 +242,16 @@ const server = {
       db.prepare("DELETE FROM favorites WHERE gtfs_stop_id = ?").run(
         decodeURIComponent(favMatch[1])
       );
+      return json({ ok: true });
+    }
+    if (favMatch && req.method === "PATCH") {
+      const body = (await req.json().catch(() => ({}))) as any;
+      const dir = body.direction;
+      if (!["both", "N", "S"].includes(dir))
+        return json({ error: "bad direction" }, 400);
+      db.prepare(
+        "UPDATE favorites SET direction = ? WHERE gtfs_stop_id = ?"
+      ).run(dir, decodeURIComponent(favMatch[1]));
       return json({ ok: true });
     }
 

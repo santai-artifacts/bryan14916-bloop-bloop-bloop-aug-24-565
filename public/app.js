@@ -156,18 +156,52 @@ function stationCard(s, fav) {
   head.append(title, routes, rm);
   card.appendChild(head);
 
+  // Direction filter (Both / uptown / downtown — labels are station-specific)
+  const dir = fav.direction || "both";
+  const northLabel = s.north_label || "Northbound";
+  const southLabel = s.south_label || "Southbound";
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const options = [
+    ["both", "Both"],
+    ["N", northLabel],
+    ["S", southLabel],
+  ];
+  for (const [value, label] of options) {
+    const b = document.createElement("button");
+    b.className = "seg-btn" + (dir === value ? " active" : "");
+    b.textContent = label;
+    b.onclick = () => setDirection(s.gtfs_stop_id, value);
+    seg.appendChild(b);
+  }
+  card.appendChild(seg);
+
   // Directions
   const dirs = document.createElement("div");
   dirs.className = "dirs";
-  dirs.appendChild(
-    dirColumn(s.north_label || "Northbound", s.arrivals?.N)
-  );
-  dirs.appendChild(
-    dirColumn(s.south_label || "Southbound", s.arrivals?.S)
-  );
+  if (dir !== "S")
+    dirs.appendChild(dirColumn(northLabel, s.arrivals?.N));
+  if (dir !== "N")
+    dirs.appendChild(dirColumn(southLabel, s.arrivals?.S));
+  if (dir !== "both") dirs.style.gridTemplateColumns = "1fr";
   card.appendChild(dirs);
 
   return card;
+}
+
+async function setDirection(id, dir) {
+  const fav = favorites.find((f) => f.gtfs_stop_id === id);
+  if (fav) fav.direction = dir;
+  render(lastData); // reflect immediately
+  try {
+    await fetch("/api/favorites/" + encodeURIComponent(id), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ direction: dir }),
+    });
+  } catch (e) {
+    /* preference is best-effort */
+  }
 }
 
 function dirColumn(label, arrivals) {

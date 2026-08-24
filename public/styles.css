@@ -215,6 +215,39 @@ body {
   font-size: 0.72rem;
 }
 
+.seg {
+  display: flex;
+  gap: 4px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  flex-wrap: wrap;
+}
+.seg-btn {
+  flex: 1;
+  min-width: fit-content;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.seg-btn:hover {
+  color: var(--text);
+  border-color: #3a445a;
+}
+.seg-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
 .dirs {
   display: grid;
   grid-template-columns: 1fr 1fr;
