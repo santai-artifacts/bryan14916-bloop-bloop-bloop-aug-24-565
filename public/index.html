@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NYC Subway Tracker</title>
+    <meta
+      name="description"
+      content="Live arrival times for your favorite NYC subway stations."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="wrap">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <span class="dot d-a">A</span><span class="dot d-1">1</span
+            ><span class="dot d-n">N</span>
+          </span>
+          <div>
+            <h1>Subway Tracker</h1>
+            <p class="tagline">Live arrivals for your NYC stations</p>
+          </div>
+        </div>
+        <button id="addBtn" class="btn-primary">+ Add station</button>
+      </div>
+    </header>
+
+    <main class="wrap main">
+      <div id="status" class="status" hidden></div>
+      <section id="board" class="board" aria-live="polite"></section>
+
+      <div id="empty" class="empty" hidden>
+        <div class="empty-illo" aria-hidden="true">🚇</div>
+        <h2>No stations yet</h2>
+        <p>Add a station to start tracking live train arrivals.</p>
+        <button class="btn-primary" data-open-add>+ Add your first station</button>
+      </div>
+    </main>
+
+    <footer class="foot wrap">
+      <span>Data: MTA GTFS-Realtime + NY Open Data</span>
+      <span id="lastUpdated"></span>
+    </footer>
+
+    <!-- Add-station modal -->
+    <div id="modal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add a station">
+        <div class="modal-head">
+          <h2>Add a station</h2>
+          <button id="closeModal" class="icon-btn" aria-label="Close">✕</button>
+        </div>
+        <input
+          id="search"
+          class="search"
+          type="search"
+          placeholder="Search stations — e.g. Union Sq, Bedford Av…"
+          autocomplete="off"
+        />
+        <ul id="results" class="results"></ul>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
